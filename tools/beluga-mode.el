@@ -456,6 +456,11 @@ If a previous beli process already exists, kill it first."
         (push ol beluga--holes-overlays)
         ))))
 
+(defun insert-and-indent (str start)
+  (goto-char start)
+  (insert str)
+  (indent-region start (+ start (length str))))
+
 (defun beluga-split-hole (hole var)
   "Split on a hole"
   (interactive "nHole to split at: \nsVariable to split on: ")
@@ -467,8 +472,7 @@ If a previous beli process already exists, kill it first."
              (end (overlay-end ovr)))
         (delete-overlay ovr)
         (delete-region start end)
-        (goto-char start)
-        (insert (format "(%s)" resp))
+        (insert-and-indent (format "(%s)" resp) start)
         (save-buffer)
         (beluga-load)
         (beluga-highlight-holes)))))
@@ -484,8 +488,7 @@ If a previous beli process already exists, kill it first."
              (end (overlay-end ovr)))
         (delete-overlay ovr)
         (delete-region start end)
-        (goto-char start)
-        (insert resp)
+        (insert-and-indent resp start)
         (save-buffer)
         (beluga-load)
         (beluga-highlight-holes)))))
