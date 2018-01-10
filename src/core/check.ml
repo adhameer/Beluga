@@ -417,12 +417,12 @@ let mark_ind cD k =
 
 
   let rec lookup cG k = match (cG, k) with
-    | (I.Dec (_cG', CTypDecl (f,  tau)), 1) -> (f,tau)
-    | (I.Dec ( cG', CTypDecl (_, _tau)), k) ->
+    | (I.Dec (_cG', CTypDecl (f,  tau, wf_tag)), 1) -> (f,tau,wf_tag)
+    | (I.Dec ( cG', CTypDecl (_, _tau, _)), k) ->
         lookup cG' (k - 1)
 
   let lookup' cG k =
-    let (f,tau) = lookup cG k in tau
+    let (f,tau, _) = lookup cG k in tau
 
 let rec checkParamTypeValid cD cPsi tA =
   let rec checkParamTypeValid' (cPsi0,n) = match cPsi0 with
@@ -577,11 +577,11 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
 
   let rec checkW cD ((cG , cIH) : ctyp_decl I.ctx * ctyp_decl I.ctx) e ttau = match (e, ttau) with
     | (Rec (loc, f, e), (tau, t)) ->
-        check cD (I.Dec (cG, CTypDecl (f, TypClo (tau,t))), (Total.shift cIH)) e ttau;
+        check cD (I.Dec (cG, CTypDecl (f, TypClo (tau,t), false)), (Total.shift cIH)) e ttau;
         Typeinfo.Comp.add loc (Typeinfo.Comp.mk_entry cD ttau) ("Rec" ^ " " ^ Pretty.Int.DefaultPrinter.expChkToString cD cG e)
 
     | (Fn (loc, x, e), (TypArr (tau1, tau2), t)) ->
-        check cD (I.Dec (cG, CTypDecl (x, TypClo(tau1, t))), (Total.shift cIH)) e (tau2, t);
+        check cD (I.Dec (cG, CTypDecl (x, TypClo(tau1, t), false)), (Total.shift cIH)) e (tau2, t);
         Typeinfo.Comp.add loc (Typeinfo.Comp.mk_entry cD ttau) ("Fn" ^ " " ^ Pretty.Int.DefaultPrinter.expChkToString cD cG e)
 
     | (Fun (loc, fbr), _) ->
@@ -600,7 +600,7 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
     | (Let (loc, i, (x, e)), (tau, t)) ->
         let (_ , tau', t') = syn cD (cG,cIH) i in
         let (tau', t') =  C.cwhnfCTyp (tau',t') in
-        let cG' = I.Dec (cG, CTypDecl (x, TypClo (tau', t'))) in
+        let cG' = I.Dec (cG, CTypDecl (x, TypClo (tau', t'), false)) in
           check cD (cG', Total.shift cIH) e (tau,t);
           Typeinfo.Comp.add loc (Typeinfo.Comp.mk_entry cD ttau) ("Let" ^ " " ^ Pretty.Int.DefaultPrinter.expChkToString cD cG e)
 
@@ -609,7 +609,7 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
         let (tau', t') =  C.cwhnfCTyp (tau',t') in
         begin match (tau',t') with
           | (TypCross (tau1, tau2), t') ->
-              let cG' = I.Dec (I.Dec (cG, CTypDecl (x, TypClo (tau1, t'))), CTypDecl (y, TypClo(tau2, t'))) in
+              let cG' = I.Dec (I.Dec (cG, CTypDecl (x, TypClo (tau1, t'), false)), CTypDecl (y, TypClo(tau2, t'), false)) in
                 check cD (cG', (Total.shift (Total.shift cIH))) e (tau,t)
           | _ -> raise (Error.Violation "Case scrutinee not of boxed type")
         end
@@ -623,7 +623,7 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
         with Whnf.FreeMVar (I.FMVar (u, _ )) ->
           raise (Error.Violation ("Free meta-variable " ^ (Id.render_name u)))
         end
-    | (Case (loc, prag, Ann (Box (_, (l,cM)), (TypBox (_, mT) as tau0_sc)), branches), (tau, t)) ->
+    | (Case (loc, prag, (Ann (Box (_, (l,cM)), (TypBox (_, mT) as tau0_sc)) as i), branches), (tau, t)) ->
         let (total_pragma, tau_sc, projOpt) =  (match  cM with
                    | I.ClObj (_ , I.MObj (I.Root (_, I.PVar (x,s) , _ )))
 		   | I.ClObj (_ , I.PObj (I.PVar (x,s)))  ->
@@ -648,7 +648,7 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
         (* Typeinfo.Comp.add loc (Typeinfo.Comp.mk_entry cD ttau) ("Case 1" ^ " " ^ Pretty.Int.DefaultPrinter.expChkToString cD cG e); *)
         let problem = Coverage.make loc prag cD branches tau_sc in
           (* Coverage.stage problem; *)
-          checkBranches total_pragma cD (cG,cIH) branches tau0_sc (tau, t);
+          checkBranches total_pragma cD (cG,cIH) (i,branches) tau0_sc (tau, t);
           Coverage.process problem projOpt
 
     | (Case (loc, prag, i, branches), (tau, t)) ->
@@ -656,13 +656,13 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
           let (_ , tau', t') = syn cD (cG,cIH) i in
 	  let tau_s = C.cnormCTyp (tau', t') in
 	  let problem = Coverage.make loc prag cD branches (Whnf.cnormCTyp (tau',t')) in
-	    checkBranches total_pragma cD (cG,cIH) branches tau_s (tau,t);
+	    checkBranches total_pragma cD (cG,cIH) (i, branches) tau_s (tau,t);
             Coverage.process problem None
 	in
 	  if !Total.enabled then
 	    (match i with
 	       | Var (_, x)  ->
-		   let (f,tau') = lookup cG x in
+		   let (f,tau', wf_tag) = lookup cG x in
 		    (* let _ = print_string ("\nTotality checking enabled - encountered " ^ P.expSynToString cD cG i ^
 			      " with type " ^ P.compTypToString cD tau' ^ "\n") in*)
 		   let ind = match Whnf.cnormCTyp (tau', Whnf.m_id) with
@@ -670,7 +670,7 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
 					 P.expSynToString cD cG i ^ " -	INDUCTIVE\n");*)  true)
 		     | _ -> ((* print_string ("Encountered Var " ^
 					      P.expSynToString cD cG i ^ " -	NON-INDUCTIVE\n");*) false) in
-		   if ind then
+		   if ind || wf_tag then
 		     chkBranch IndDataObj cD (cG,cIH) i branches (tau,t)
 		   else
 		     chkBranch DataObj cD (cG,cIH) i branches (tau,t)
@@ -717,7 +717,7 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
 
   and syn cD (cG,cIH) e : (gctx option * typ * I.msub) = match e with
     | Var (loc, x)   ->
-      let (f,tau') = lookup cG x in
+      let (f,tau', _) = lookup cG x in
       let _ =  Typeinfo.Comp.add loc (Typeinfo.Comp.mk_entry cD (tau', C.m_id))
  	                             ("Var" ^ " " ^ Pretty.Int.DefaultPrinter.expSynToString cD cG e)
       in
@@ -898,10 +898,10 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
     LF.checkMetaObj cD mO (ctyp, theta);
     I.MDot(metaObjToMFront mO, theta)
 
-  and checkBranches caseTyp cD cG branches tau_s ttau =
-    List.iter (fun branch -> checkBranch caseTyp cD cG branch tau_s ttau) branches
+  and checkBranches caseTyp cD cG (i, branches) tau_s ttau =
+    List.iter (fun branch -> checkBranch caseTyp cD cG (i, branch) tau_s ttau) branches
 
-  and checkBranch caseTyp cD (cG, cIH) branch tau_s (tau, t) =
+  and checkBranch caseTyp cD (cG, cIH) (i, branch) tau_s (tau, t) =
     match branch with
       | EmptyBranch (loc, cD1', pat, t1) ->
           let _ = dprint (fun () -> "\nCheckBranch - Empty Pattern\n") in
@@ -920,17 +920,18 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
           let cIH   = Whnf.cnormCtx (Whnf.normCtx cIH, t1) in
           let t''   = Whnf.mcomp t t1 in
           let tau'  = Whnf.cnormCTyp (tau, t'') in
-          let (cD1',cIH')  = if is_inductive caseTyp && Total.struct_smaller (PatMetaObj (loc', mO)) then
+          let (cD1',cIH')  = if is_inductive caseTyp && Total.struct_smaller i (PatMetaObj (loc', mO)) then
          	               let cD1' = mvarsInPatt cD1' (PatMetaObj(loc', mO)) in
 				 (* print_string "Inductive and Structurally smaller\n"; *)
 				 (cD1', Total.wf_rec_calls cD1' (I.Empty))
 			     else (cD1', I.Empty) in
 	  let cD1' = if !Total.enabled then id_map_ind cD1' t1 cD
      	             else cD1' in
+          let cIH0' = Total.wf_rec_calls cD1' cG' in 
 	  (* let _ = print_string ("Outer cD = " ^ P.mctxToString cD ^ "\nInner cD' = " ^ P.mctxToString cD1' ^ "\n\n") in *)
             (LF.checkMSub loc cD1' t1 cD;
 	     LF.checkMetaObj cD1' mO (mT1, C.m_id);
-             check cD1' (cG', Context.append cIH cIH') e1 (tau', Whnf.m_id))
+             check cD1' (cG', Context.append cIH (Context.append cIH0' cIH')) e1 (tau', Whnf.m_id))
 
       | Branch (loc, cD1', cG1, pat, t1, e1) ->
           let tau_p = Whnf.cnormCTyp (tau_s, t1) in
@@ -938,20 +939,25 @@ let useIH loc cD cG cIH_opt e2 = match cIH_opt with
           let cIH   = Whnf.cnormCtx (Whnf.normCtx cIH, t1) in
           let t''   = Whnf.mcomp t t1 in
           let tau'  = Whnf.cnormCTyp (tau, t'') in
-(*          let _     = print_string ("\nCheckBranch with general pattern:" ^ P.patternToString  cD1' cG1 pat ^ "\n") in
-         let _ = print_string ("\nwhere scrutinee has type" ^
+(*        let _     = print_string ("\nCheckBranch with general pattern:" ^ P.patternToString  cD1' cG1 pat ^ "\n") in
+          let _ = print_string ("\nwhere scrutinee has type" ^
 				P.compTypToString cD tau_s ^ "\n") in *)
 	  let k     = Context.length cG1 in
 	  let cIH0  = Total.shiftIH cIH k in
-          let (cD1', cIH')  = if is_inductive caseTyp && Total.struct_smaller pat then
-                       let cD1' = mvarsInPatt cD1' pat in (cD1', Total.wf_rec_calls cD1' cG1)
-                     else (cD1', I.Empty) in
+          let (cD1', cG1', cIH')  = if is_inductive caseTyp && Total.struct_smaller i pat then
+                       let cG1' = Total.mark_gctx cG1 in 
+                       let cD1' = mvarsInPatt cD1' pat in (cD1', cG1', Total.wf_rec_calls cD1' cG1')
+                     else (cD1', cG1, I.Empty) in
+          let cIH0' = Total.shiftIH (Total.wf_rec_calls cD1' cG') k in 
+          let _  = dprint (fun () -> match cIH0' with I.Empty -> "\n" | _ -> 
+                     "Generated IH from previous cG = " ^ P.gctxToString cD1' cG' ^ "\n cIH0' = " ^
+                       Total.ih_to_string cD1' (Context.append cG' cG1') cIH0' ^ "\n") in 
 	  let cD1' = if !Total.enabled then id_map_ind cD1' t1 cD
      	             else cD1' in
 	  (* let _ = print_string ("\nOuter cD = " ^ P.mctxToString cD ^ "\nInner cD' = " ^ P.mctxToString cD1' ^ "\nGiven ref. subst. = " ^ P.msubToString cD1' t1 ^ "\n") in *)
           (LF.checkMSub loc  cD1' t1 cD;
-           checkPattern cD1' cG1 pat (tau_p, Whnf.m_id);
-           check cD1' ((Context.append cG' cG1), Context.append cIH0 cIH') e1 (tau', Whnf.m_id))
+           checkPattern cD1' cG1' pat (tau_p, Whnf.m_id);
+           check cD1' ((Context.append cG' cG1'), Context.append cIH0 (Context.append cIH0' cIH')) e1 (tau', Whnf.m_id))
 
   and checkFBranches cD ((cG , cIH) : ctyp_decl I.ctx * ctyp_decl I.ctx) fbr ttau = match fbr with
     | NilFBranch _ -> ()

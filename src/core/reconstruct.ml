@@ -50,7 +50,6 @@ let _ = Error.register_printer
     Error.print_with_location loc (fun ppf ->
       match err with
       | ErrorMsg str -> Format.fprintf ppf "NOT IMPLEMENTED: %s" str
-
         | MCtxIllformed cD ->
             Format.fprintf ppf "Unable to abstract over the free meta-variables due to dependency on the specified meta-variables. The following meta-context was reconstructed, but is ill-formed: %a"
               (P.fmt_ppr_lf_mctx Pretty.std_lvl) cD
@@ -263,8 +262,8 @@ let rec apx_length_typ_rec t_rec = match t_rec with
       1 + apx_length_typ_rec rest )
 
 let rec lookup cG k = match cG, k with
-  | Int.LF.Dec (_cG', Int.Comp.CTypDecl (_, tau)), 1 -> Whnf.cnormCTyp (tau, Whnf.m_id)
-  | Int.LF.Dec ( cG', Int.Comp.CTypDecl (_, _tau)), k -> lookup cG' (k-1)
+  | Int.LF.Dec (_cG', Int.Comp.CTypDecl (_, tau, _ )), 1 -> Whnf.cnormCTyp (tau, Whnf.m_id)
+  | Int.LF.Dec ( cG', Int.Comp.CTypDecl (_, _tau, _ )), k -> lookup cG' (k-1)
 
 (* -------------------------------------------------------------*)
 
@@ -335,6 +334,8 @@ let rec elMCtx recT delta = match delta with
  * type a U1 ... Un
  *)
 
+
+
 let mgAtomicTyp cD cPsi a kK =
   let (flat_cPsi, conv_list) = flattenDCtx cD cPsi in
   let s_proj   = gen_conv_sub conv_list in
@@ -344,29 +345,25 @@ let mgAtomicTyp cD cPsi a kK =
 
     | (Int.LF.PiKind ((Int.LF.TypDecl (_n, tA1), dep ), kK), s) ->
         let tA1' = strans_typ cD cPsi (tA1, s) conv_list in
-        let h    = if !strengthen then
+        let tR    = if !strengthen then
               	   (let (ss', cPhi') = Subord.thin' cD a flat_cPsi in
                        (* cPhi |- ss' : cPhi' *)
                      let ssi' = LF.invert ss' in
                        (* cPhi' |- ssi : cPhi *)
                        (* cPhi' |- [ssi]tQ    *)
-                     let u  = Whnf.newMMVar None (cD, cPhi' , Int.LF.TClo (tA1', ssi')) dep in
                      let ss_proj = LF.comp ss' s_proj in
-                       Int.LF.MMVar ((u, Whnf.m_id), ss_proj))
+                     Whnf.etaExpandMMV Syntax.Loc.ghost cD cPhi' (tA1', ssi') _n ss_proj dep)
                    else
-                     let u  = Whnf.newMMVar None (cD, flat_cPsi , tA1')  dep in
-                     Int.LF.MMVar ((u, Whnf.m_id), s_proj)
+                     Whnf.etaExpandMMV Syntax.Loc.ghost cD flat_cPsi (tA1', Substitution.LF.id) _n s_proj dep
         in
-        let tR = Int.LF.Root (Syntax.Loc.ghost, h, Int.LF.Nil) in  (* -bp needs to be eta-expanded *)
 
-        let _ = dprint (fun () -> "Generated meta^2-variable " ^
+        let _ = dprint (fun () -> "Generated mg Term (meta2) tR = " ^
                           P.normalToString cD cPsi (tR, LF.id)) in
         let _ = dprint (fun () -> "of type : " ^ P.dctxToString cD flat_cPsi ^
                           " |- " ^ P.typToString cD flat_cPsi (tA1',LF.id)) in
         let _ = dprint (fun () -> "orig type : " ^ P.dctxToString cD cPsi ^
                           " |- " ^ P.typToString cD cPsi (tA1,s)) in
-        let tS = genSpine (kK, Int.LF.Dot (Int.LF.Head h, s)) in
-        (* let tS = genSpine (kK, Int.LF.Dot (Int.LF.Obj tR , s)) in  *)
+         let tS = genSpine (kK, Int.LF.Dot (Int.LF.Obj tR , s)) in  
           Int.LF.App (tR, tS)
 
   in
@@ -404,9 +401,12 @@ let metaObjToFt (loc, m) = m
 
 
 let mmVarToCMetaObj loc' mV = function
-  | Int.LF.MTyp tA   -> Int.LF.MObj (Int.LF.Root(loc', Int.LF.MMVar ((mV, Whnf.m_id), LF.id), Int.LF.Nil))
-  | Int.LF.PTyp tA   -> Int.LF.PObj (Int.LF.MPVar ((mV, Whnf.m_id), LF.id))
-  | Int.LF.STyp (_, cPhi) -> Int.LF.SObj (Int.LF.MSVar (0, ((mV, Whnf.m_id), LF.id)))
+  | Int.LF.MTyp tA   -> (dprint (fun () -> "genMetaVar' [mmVarToCMetaObj]: MObj - MMV \n") ;
+                         Int.LF.MObj (Int.LF.Root(loc', Int.LF.MMVar ((mV, Whnf.m_id), LF.id), Int.LF.Nil)))
+  | Int.LF.PTyp tA   -> (dprint (fun () ->  "genMetaVar' [mmVarToCMetaObj]: PObj - PVar\n"); 
+                         Int.LF.PObj (Int.LF.MPVar ((mV, Whnf.m_id), LF.id)))
+  | Int.LF.STyp (_, cPhi) -> (dprint (fun () ->  "genMetaVar' [mmVarToCMetaObj]: PObj - PVar\n"); 
+                             Int.LF.SObj (Int.LF.MSVar (0, ((mV, Whnf.m_id), LF.id))))
 
 let mmVarToMetaObj loc' mV = function
   | Int.LF.ClTyp (mt, cPsi) ->
@@ -416,6 +416,7 @@ let mmVarToMetaObj loc' mV = function
 
 let genMetaVar' loc' cD (loc, n , ctyp, t) =
   let ctyp' = C.cnormMTyp (ctyp, t) in
+  let _ = dprint (fun () -> "[genMetaVar'] Type : " ^ P.metaTypToString cD ctyp) in
   let mO = mmVarToMetaObj loc' (Whnf.newMMVar' (Some n) (cD, ctyp') Int.LF.Maybe) ctyp' in
   ((loc',mO), Int.LF.MDot(mO,t))
 
@@ -452,10 +453,14 @@ let elClObj cD loc cPsi' clobj mtyp = match clobj, mtyp with
   | Apx.Comp.MObj m, Int.LF.STyp (cl, cPhi') -> (* This fixes up an ambiguity *)
     Int.LF.SObj (Lfrecon.elSub loc Lfrecon.Pibox cD cPsi' (Apx.LF.Dot(Apx.LF.Obj m, Apx.LF.EmptySub)) cl cPhi')
 
+  | Apx.Comp.MObj (Apx.LF.Root (_, Apx.LF.Hole, Apx.LF.Nil)), Int.LF.PTyp _tA' -> 
+     let mV = Whnf.newMMVar' (None) (cD, Int.LF.ClTyp (mtyp, cPsi')) Int.LF.Maybe in 
+       mmVarToCMetaObj loc mV mtyp
+
   | Apx.Comp.MObj (Apx.LF.Root (_,h,Apx.LF.Nil) as tM), Int.LF.PTyp tA' ->
     (* TODO: Something a little more gentle.. *)
     let Int.LF.Root (_, h, Int.LF.Nil) = Lfrecon.elTerm  Lfrecon.Pibox cD cPsi' tM (tA', LF.id) in
-    Int.LF.PObj h
+      Int.LF.PObj h
   | _ , _ -> raise (Error (loc,  MetaObjectClash (cD, Int.LF.ClTyp (mtyp, cPsi'))))
 
 let rec elMetaObj' cD loc cM cTt = match cM , cTt with
@@ -475,7 +480,6 @@ let rec elMetaObj' cD loc cM cTt = match cM , cTt with
   | (_ , _) -> raise (Error (loc,  MetaObjectClash (cD, cTt)))
 
 and elMetaObj cD (loc,cM) cTt =
-
     let ctyp = C.cnormMTyp cTt in
     let r = elMetaObj' cD loc cM ctyp in
       begin try 
@@ -672,7 +676,7 @@ let rec elExp cD cG e theta_tau = elExpW cD cG e (C.cwhnfCTyp theta_tau)
 and elExpW cD cG e theta_tau = match (e, theta_tau) with
   | (Apx.Comp.Fn (loc, x, e), (Int.Comp.TypArr (tau1, tau2), theta)) ->
      (* let cG' = Int.LF.Dec (cG, Int.Comp.CTypDecl (x, Int.Comp.TypClo (tau1, theta))) in *)
-     let cG' = Int.LF.Dec (cG, Int.Comp.CTypDecl (x, Whnf.cnormCTyp (tau1, theta))) in
+     let cG' = Int.LF.Dec (cG, Int.Comp.CTypDecl (x, Whnf.cnormCTyp (tau1, theta), false)) in
      let e' = elExp cD cG' e (tau2, theta) in
      let e'' =  Whnf.cnormExp (Int.Comp.Fn (loc, x, e'), Whnf.m_id) in
      let _ = dprint (fun () -> "[elExp] Fn " ^ Id.render_name x ^ " done ") in
@@ -754,8 +758,8 @@ and elExpW cD cG e theta_tau = match (e, theta_tau) with
       let (i', tau_theta') = elExp' cD cG i in
         begin match C.cwhnfCTyp tau_theta' with
           | (Int.Comp.TypCross (tau1, tau2), t) ->
-              let cG1 = Int.LF.Dec (cG, Int.Comp.CTypDecl (x,  Whnf.cnormCTyp (tau1, t))) in
-              let cG2 = Int.LF.Dec (cG1, Int.Comp.CTypDecl (y, Whnf.cnormCTyp (tau2, t))) in
+              let cG1 = Int.LF.Dec (cG, Int.Comp.CTypDecl (x,  Whnf.cnormCTyp (tau1, t), false)) in
+              let cG2 = Int.LF.Dec (cG1, Int.Comp.CTypDecl (y, Whnf.cnormCTyp (tau2, t), false)) in
               let e'  =  elExp cD cG2 e (tau, theta) in
                 Int.Comp.LetPair (loc, i', (x, y, e'))
 
@@ -765,7 +769,7 @@ and elExpW cD cG e theta_tau = match (e, theta_tau) with
 
   | (Apx.Comp.Let (loc, i, (x, e)), (tau, theta)) ->
       let (i', (tau',theta')) = elExp' cD cG i in
-      let cG1 = Int.LF.Dec (cG, Int.Comp.CTypDecl (x,  Whnf.cnormCTyp (tau',theta'))) in
+      let cG1 = Int.LF.Dec (cG, Int.Comp.CTypDecl (x,  Whnf.cnormCTyp (tau',theta'), false)) in
       let e'  =  elExp cD cG1 e (tau, theta) in
         Int.Comp.Let (loc, i', (x,  e'))
 
@@ -1126,7 +1130,7 @@ and elPatChk (cD:Int.LF.mctx) (cG:Int.Comp.gctx) pat ttau = match (pat, ttau) wi
       let _  = dprint (fun () -> "Inferred type of pat var " ^ Id.render_name name )  in
       let _ = dprint (fun () -> " ..... as   " ^ P.compTypToString cD  tau')
       in
-      (Int.LF.Dec(cG, Int.Comp.CTypDecl (name, tau')),
+      (Int.LF.Dec(cG, Int.Comp.CTypDecl (name, tau', false)),
        Int.Comp.PatVar (loc, x))
 (*  | (Apx.Comp.PatFVar (loc, x) , ttau) ->
        (FPatVar.add x (Whnf.cnormCTyp ttau);
@@ -1242,9 +1246,10 @@ and elPatSpineW cD cG pat_spine ttau = match pat_spine with
 
           | (Int.Comp.TypPiBox (Int.LF.Decl (_,ctyp,dep), tau), theta) ->
              let _ = dprint (fun () -> "[elPatSpine] TypPiBox explicit ttau = " ^
-                               P.compTypToString cD (Whnf.cnormCTyp ttau)) in
+                                         P.compTypToString cD (Whnf.cnormCTyp ttau) ^ "\n") in
              let (pat, theta') = elPatMetaObj cD pat' (ctyp, theta) in
              let _ = dprint (fun () -> "[elPatSpine] pat = " ^ P.patternToString cD cG pat ) in
+             let _ = dprint (fun () -> "[elPatSpine] theta' = " ^ P.msubToString cD theta') in
              let _ = dprint (fun () -> "[elPatSpine] remaining pattern spine must have type : " ) in
              let _ = dprint (fun () -> "              " ^ P.compTypToString cD (Whnf.cnormCTyp (tau, theta'))) in
              let (cG1, pat_spine, ttau2) = elPatSpine cD cG pat_spine' (tau, theta') in
@@ -1448,7 +1453,7 @@ and synPatRefine loc caseT (cD, cD_p) pat (tau_s, tau_p) =
     let _ = dprnt "AbstractMSub..." in
       (* cD1' |- t' <= cD' where cD' = cD, cD_p *)
     let (t', cD1') = Abstract.msub (Whnf.cnormMSub t) in
-    let _ = dprnt "AbstractMSub... done " in
+    let _ = dprnt ("AbstractMSub... done : \n " ^ P.mctxToString cD1' ^ "\n       |- " ^ P.msubToString cD1' t' ) in
     let rec drop t l_delta1 = match (l_delta1, t) with
         | (0, t) -> t
         | (k, Int.LF.MDot(_ , t') ) -> drop t' (k-1) in

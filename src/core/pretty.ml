@@ -236,7 +236,7 @@ module Int = struct
     let rec get_names_gctx : Comp.gctx -> Id.name list = function
       | LF.Empty -> []
       | LF.Dec (cG', Comp.WfRec (n, _, _))
-      | LF.Dec (cG', Comp.CTypDecl (n, _))
+      | LF.Dec (cG', Comp.CTypDecl (n, _, _ ))
       | LF.Dec (cG', Comp.CTypDeclOpt n) -> n :: get_names_gctx cG'
 
     let fresh_name_dctx (cPsi : LF.dctx) : Id.name -> Id.name =
@@ -597,7 +597,7 @@ module Int = struct
     and fmt_ppr_lf_clobj cD lvl cPsi ppf = function
       | LF.MObj m -> fmt_ppr_lf_normal cD cPsi lvl ppf m
       | LF.SObj s -> fmt_ppr_lf_sub cD cPsi lvl ppf s
-      | LF.PObj h -> fmt_ppr_lf_head cD cPsi lvl ppf h
+      | LF.PObj h -> fprintf ppf "#%a" (fmt_ppr_lf_head cD cPsi lvl) h
 
 
    and fmt_ppr_mfront' cD _lvl ppf mO = match mO with
@@ -1529,10 +1529,11 @@ module Int = struct
       | LF.Empty ->
           fprintf ppf "."
 
-      | LF.Dec (cG, Comp.CTypDecl (x, tau)) ->
-          fprintf ppf "%a, %s: %a"
+      | LF.Dec (cG, Comp.CTypDecl (x, tau, tag )) ->
+         let s = if tag then "*" else "" in 
+          fprintf ppf "%a, %s%s: %a"
             (fmt_ppr_cmp_gctx cD 0) cG
-            (Id.render_name x)
+            (Id.render_name x) s
             (fmt_ppr_cmp_typ cD lvl) tau
 
     let fmt_ppr_rec lvl ppf prefix (f, tau, e) =
@@ -1541,7 +1542,7 @@ module Int = struct
             (R.render_cid_prog  f)
             (fmt_ppr_cmp_typ LF.Empty lvl) tau
             (fmt_ppr_cmp_exp_chk  LF.Empty
-               (LF.Dec(LF.Empty, Comp.CTypDecl ((Store.Cid.Comp.get f).Store.Cid.Comp.name ,  tau)))  lvl) e
+               (LF.Dec(LF.Empty, Comp.CTypDecl ((Store.Cid.Comp.get f).Store.Cid.Comp.name ,  tau, false)))  lvl) e
 
     let rec fmt_ppr_sgn_decl lvl ppf = function
       | Sgn.CompTypAbbrev (_,_,_,_) -> ()
